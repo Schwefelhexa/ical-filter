@@ -1,20 +1,28 @@
-use std::{collections::HashMap, io::BufWriter};
-use std::fs::File;
+use clap::Parser;
+use std::collections::HashMap;
 use std::io::BufReader;
 
-use ics::{Event, ICalendar, components::Property};
+use ics::{components::Property, Event, ICalendar};
 use regex::Regex;
+use url::Url;
+
+#[derive(Parser, Debug)]
+struct Args {
+    source: Url,
+}
 
 fn main() {
-    let buf = BufReader::new(File::open("/tmp/component.ics").unwrap());
-    // hashMap of blacklists
     let mut blacklist = HashMap::<String, Vec<Regex>>::new();
     blacklist.insert(
         "SUMMARY".to_string(),
         vec![Regex::new(r"^.*TU.*$").unwrap()],
     );
 
-    let reader = ical::IcalParser::new(buf);
+    let args = Args::parse();
+    let source = reqwest::blocking::get(args.source).unwrap();
+    let source = source.text().unwrap();
+
+    let reader = ical::IcalParser::new(BufReader::new(source.as_bytes()));
 
     for calendar in reader {
         let calendar = calendar.unwrap();
@@ -57,8 +65,10 @@ fn main() {
                 .map(|p| (p.name.clone(), p.value.clone().unwrap()))
                 .collect();
 
-            let mut output_event =
-                Event::new(props.get("UID").unwrap().clone(), props.get("DTSTAMP").unwrap().clone());
+            let mut output_event = Event::new(
+                props.get("UID").unwrap().clone(),
+                props.get("DTSTAMP").unwrap().clone(),
+            );
 
             e.properties.iter().for_each(|p| {
                 output_event.push(Property::new(p.name.clone(), p.value.clone().unwrap()));
@@ -68,6 +78,5 @@ fn main() {
         });
 
         output_calendar.write(std::io::stdout()).unwrap();
-
     }
 }
