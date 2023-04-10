@@ -1,9 +1,18 @@
 use clap::Parser;
-use std::collections::HashMap;
-use std::io::BufReader;
+use std::net::SocketAddr;
 
+use http_body_util::Full;
+use hyper::body::Bytes;
+
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
 use ics::{components::Property, Event, ICalendar};
 use regex::Regex;
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::io::BufReader;
+use tokio::net::TcpListener;
 use url::Url;
 
 #[derive(Parser, Debug)]
@@ -15,11 +24,13 @@ struct Args {
     blacklist: Vec<String>,
 }
 
-fn main() {
+async fn filter_ical(
+    _: Request<hyper::body::Incoming>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
     let args = Args::parse();
 
-    let source = reqwest::blocking::get(args.source).unwrap();
-    let source = source.text().unwrap();
+    let source = reqwest::get(args.source).await.unwrap();
+    let source = source.text().await.unwrap();
 
     let reader = ical::IcalParser::new(BufReader::new(source.as_bytes()));
 
@@ -38,59 +49,81 @@ fn main() {
         }
     });
 
-    for calendar in reader {
-        let calendar = calendar.unwrap();
-        let events = calendar.events.iter().filter(|e| {
-            e.properties.iter().all(|p| {
-                if let Some(blacklist) = blacklist.get(&p.name) {
-                    blacklist
-                        .iter()
-                        .all(|r| !r.is_match(&p.value.clone().unwrap()))
-                } else {
-                    true
-                }
-            })
-        });
-        let events = events.collect::<Vec<_>>();
+    let calendar = reader.into_iter().next().unwrap().unwrap();
+    let events = calendar.events.iter().filter(|e| {
+        e.properties.iter().all(|p| {
+            if let Some(blacklist) = blacklist.get(&p.name) {
+                blacklist
+                    .iter()
+                    .all(|r| !r.is_match(&p.value.clone().unwrap()))
+            } else {
+                true
+            }
+        })
+    });
+    let events = events.collect::<Vec<_>>();
 
-        let cal_version = calendar
+    let cal_version = calendar
+        .properties
+        .iter()
+        .find(|p| p.name == "VERSION")
+        .unwrap()
+        .value
+        .clone()
+        .unwrap();
+    let prod_id = calendar
+        .properties
+        .iter()
+        .find(|p| p.name == "PRODID")
+        .unwrap()
+        .value
+        .clone()
+        .unwrap();
+
+    let mut output_calendar = ICalendar::new(cal_version, prod_id);
+
+    events.iter().for_each(|e| {
+        let props: HashMap<String, String> = e
             .properties
             .iter()
-            .find(|p| p.name == "VERSION")
-            .unwrap()
-            .value
-            .clone()
-            .unwrap();
-        let prod_id = calendar
-            .properties
-            .iter()
-            .find(|p| p.name == "PRODID")
-            .unwrap()
-            .value
-            .clone()
-            .unwrap();
+            .map(|p| (p.name.clone(), p.value.clone().unwrap()))
+            .collect();
 
-        let mut output_calendar = ICalendar::new(cal_version, prod_id);
+        let mut output_event = Event::new(
+            props.get("UID").unwrap().clone(),
+            props.get("DTSTAMP").unwrap().clone(),
+        );
 
-        events.iter().for_each(|e| {
-            let props: HashMap<String, String> = e
-                .properties
-                .iter()
-                .map(|p| (p.name.clone(), p.value.clone().unwrap()))
-                .collect();
-
-            let mut output_event = Event::new(
-                props.get("UID").unwrap().clone(),
-                props.get("DTSTAMP").unwrap().clone(),
-            );
-
-            e.properties.iter().for_each(|p| {
-                output_event.push(Property::new(p.name.clone(), p.value.clone().unwrap()));
-            });
-
-            output_calendar.add_event(output_event);
+        e.properties.iter().for_each(|p| {
+            output_event.push(Property::new(p.name.clone(), p.value.clone().unwrap()));
         });
 
-        output_calendar.write(std::io::stdout()).unwrap();
+        output_calendar.add_event(output_event);
+    });
+
+    let mut buf = Vec::new();
+    output_calendar.write(&mut buf).unwrap();
+
+    Ok(Response::new(Full::from(buf)))
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let addr: SocketAddr = ([127, 0, 0, 1], 3000).into();
+
+    let listener = TcpListener::bind(&addr).await?;
+    println!("Listening on http://{}", addr);
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+
+        tokio::task::spawn(async move {
+            if let Err(err) = http1::Builder::new()
+                .serve_connection(stream, service_fn(filter_ical))
+                .await
+            {
+                println!("Error serving connection: {:?}", err);
+            }
+        });
     }
 }
