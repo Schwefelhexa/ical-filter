@@ -104,12 +104,21 @@ async fn filter_ical(
     let mut buf = Vec::new();
     output_calendar.write(&mut buf).unwrap();
 
-    Ok(Response::new(Full::from(buf)))
+    let mut res = Response::new(Full::from(buf));
+    res.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/calendar;charset=UTF-8"),
+    );
+    res.headers_mut().insert(
+        hyper::header::CONTENT_DISPOSITION,
+        hyper::header::HeaderValue::from_static("attachment; filename=calendar.ics"),
+    );
+    Ok(res)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let addr: SocketAddr = ([127, 0, 0, 1], 3000).into();
+    let addr: SocketAddr = ([0, 0, 0, 0], 3000).into();
 
     let listener = TcpListener::bind(&addr).await?;
     println!("Listening on http://{}", addr);
