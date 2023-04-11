@@ -95,7 +95,7 @@ async fn filter_ical(
         );
 
         e.properties.iter().for_each(|p| {
-            output_event.push(Property::new(p.name.clone(), p.value.clone().unwrap()));
+            output_event.push(Property::new(p.name.clone(), p.value.clone().unwrap_or("".to_string())));
         });
 
         output_calendar.add_event(output_event);
