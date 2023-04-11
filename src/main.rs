@@ -86,7 +86,7 @@ async fn filter_ical(
         let props: HashMap<String, String> = e
             .properties
             .iter()
-            .map(|p| (p.name.clone(), p.value.clone().unwrap()))
+            .map(|p| (p.name.clone(), p.value.clone().unwrap_or("".to_string())))
             .collect();
 
         let mut output_event = Event::new(
