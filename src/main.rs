@@ -1,4 +1,5 @@
 use clap::Parser;
+use itertools::Itertools;
 use std::net::SocketAddr;
 
 use http_body_util::Full;
@@ -22,6 +23,10 @@ struct Args {
     // Blacklist rules
     #[clap(short, long)]
     blacklist: Vec<String>,
+
+    // Dedup events with same start, end and name
+    #[clap(short, long, default_value_t = false)]
+    dedup: bool,
 }
 
 async fn filter_ical(
@@ -61,7 +66,26 @@ async fn filter_ical(
             }
         })
     });
-    let events = events.collect::<Vec<_>>();
+    let events = if args.dedup {
+        println!("Deduping events");
+        events
+            .unique_by(|a| {
+                let props: HashMap<_, _> = a
+                    .properties
+                    .iter()
+                    .map(|p| (p.name.clone(), p.value.clone()))
+                    .collect();
+
+                (
+                    props.get("DTSTART").unwrap().clone(),
+                    props.get("DTEND").unwrap().clone(),
+                    props.get("SUMMARY").unwrap().clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    } else {
+        events.collect::<Vec<_>>()
+    };
 
     let cal_version = calendar
         .properties
@@ -95,7 +119,10 @@ async fn filter_ical(
         );
 
         e.properties.iter().for_each(|p| {
-            output_event.push(Property::new(p.name.clone(), p.value.clone().unwrap_or("".to_string())));
+            output_event.push(Property::new(
+                p.name.clone(),
+                p.value.clone().unwrap_or("".to_string()),
+            ));
         });
 
         output_calendar.add_event(output_event);
