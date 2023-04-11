@@ -113,6 +113,10 @@ async fn filter_ical(
         hyper::header::CONTENT_DISPOSITION,
         hyper::header::HeaderValue::from_static("attachment; filename=calendar.ics"),
     );
+    res.headers_mut().insert(
+        hyper::header::VARY,
+        hyper::header::HeaderValue::from_static("User-Agent"),
+    );
     Ok(res)
 }
 
