@@ -15,6 +15,7 @@ hyper = { version = "1.0.0-rc.3", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 http-body-util = "0.1.0-rc.2"
 itertools = "0.10.5"
+anyhow = "1.0.70"
 
 [dependencies.ical]
 version = "0.8.*"
